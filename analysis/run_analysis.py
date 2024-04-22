@@ -8,17 +8,16 @@ import re
 import urllib.request
 import ssl
 from Bio import Entrez
-import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 
 PUBLICATION_YEAR = "2023"
 
-def search(query, count):
+def search(query):
     Entrez.email = "example@email.com"
     handle = Entrez.esearch(db='pubmed',
                             sort='relevance',
-                            retmax=count,
+                            
                             retmode='xml',
                             year=PUBLICATION_YEAR,
                             term=query)
@@ -32,20 +31,24 @@ def fetch_article_text(pubmed_id):
     https://www.ncbi.nlm.nih.gov/research/bionlp/APIs/BioC-PMC/
     
     """
-    print(pubmed_id)
     raw = urllib.request.urlopen(f"https://www.ncbi.nlm.nih.gov/research/bionlp/RESTful/pmcoa.cgi/BioC_xml/{pubmed_id}/unicode")
     contents = raw.read()
     return contents.decode("utf-8")
 
-def get_does_text_have_code(text):
+def parse_article_text(text):
 
-    # Regex for 'code availible'
+    # An arbitrary threshold of 20 characters chosen, BioC often returns articles that don't have full text
+    has_full_text_available = len(text) > 20
+
+    # Regex for 'code available', the standard
     has_code_available = re.search("code availab", text, re.IGNORECASE) is not None
     
     # Regex for github, bitbucket, or gitlab
-    has_repository_link = re.search("bitbucket|github|gitlab", text, re.IGNORECASE) is not None
+    repository_match = re.search("bitbucket|github|gitlab", text, re.IGNORECASE)
 
-    return has_code_available, has_repository_link
+    repository_link = repository_match.group(0) if repository_match is not None else False
+
+    return has_full_text_available, has_code_available, repository_link
 
 def ssl_patch():
     try:
@@ -58,29 +61,27 @@ def ssl_patch():
         ssl._create_default_https_context = _create_unverified_https_context
 
 
-def calculate_statistics(results, count):
-
+def calculate_statistics(results, max_results):
 
     pubmed_ids = results['IdList']
 
-    articles_data = {
-        "pubmed_id": [],
-        "fake": [],
-        "repository_link": []
-    }
+    articles_data = []
+
+    print(len(pubmed_ids))
 
     for pubmed_id in pubmed_ids:
-        print("Searching details")
+        print(f"Searching details for {pubmed_id}")
 
         contents = fetch_article_text(pubmed_id)
-        result = get_does_text_have_code(contents)
 
-        # articles_data[]
-        # articles_data[]
-        # articles_data[]
+        # TODO filter original research
 
+        has_full_text_available, has_code_available, repository_link = parse_article_text(contents)
 
-    df = pd.DataFrame.from_dict(articles_data)
+        if has_full_text_available:
+            articles_data += [[pubmed_id, has_full_text_available, has_code_available, repository_link]]
+        
+    df = pd.DataFrame(articles_data, columns=["PubMedID", "FullText", "CodeAvailable", "RepositoryLink"])
 
     return df
 
@@ -90,23 +91,23 @@ def main():
     ssl_patch()
 
     parser = argparse.ArgumentParser(description='Search Pubmed and other databases.')
-    parser.add_argument("-n", type=int, default=20, dest='count', help="The number of results to fetch (default = 20)")
+    parser.add_argument("-n", type=int, default=20, dest='max_results', help="The number of results to fetch (default = 20)")
     args = parser.parse_args()
 
-    count = args.count
+    max_results = args.max_results
 
     query = "task fmri"
 
     print(f"Searching PubMed for '{query}'")
-    results = search(query, count)
+    results = search(query)
     print(f"Found {results['Count']} results searching for '{query}'")
 
-    print(results)
+    print("Calculating statistics")
+    df = calculate_statistics(results, max_results)
 
-
-    df = calculate_statistics(results, count)
-
-    # df.to_csv("results.csv", index=False)
+    print("DataFrame created")
+    print(df)
+    df.to_csv("results.csv", index=False)
 
 
 if __name__ == "__main__":

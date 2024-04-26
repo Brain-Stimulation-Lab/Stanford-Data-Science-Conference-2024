@@ -1,5 +1,0 @@
-# This is an example .gitignore file
-# Git will track every file except for the ones listed here
-
-.DS_Store
-.pycache
